@@ -1,0 +1,60 @@
+{
+  "Beams": [
+    {
+      "Id": 1,
+      "Length": 1,
+      "CrossSectionArea": 1,
+      "DistributedForce": 1,
+      "Elasticity": 1,
+      "AllowableStress": 1
+    },
+    {
+      "Id": 2,
+      "Length": 2,
+      "CrossSectionArea": 2,
+      "DistributedForce": 0,
+      "Elasticity": 1,
+      "AllowableStress": 1
+    },
+    {
+      "Id": 3,
+      "Length": 2,
+      "CrossSectionArea": 2,
+      "DistributedForce": 0,
+      "Elasticity": 1,
+      "AllowableStress": 1
+    },
+    {
+      "Id": 4,
+      "Length": 1,
+      "CrossSectionArea": 1,
+      "DistributedForce": -1,
+      "Elasticity": 1,
+      "AllowableStress": 1
+    }
+  ],
+  "Nodes": [
+    {
+      "Id": 1,
+      "AppliedForce": 0
+    },
+    {
+      "Id": 2,
+      "AppliedForce": 0
+    },
+    {
+      "Id": 3,
+      "AppliedForce": 1
+    },
+    {
+      "Id": 4,
+      "AppliedForce": 0
+    },
+    {
+      "Id": 5,
+      "AppliedForce": 0
+    }
+  ],
+  "IsLeftSupport": true,
+  "IsRightSupport": true
+}

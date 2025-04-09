@@ -1,0 +1,3 @@
+﻿<Project>
+  <Import Project="..\build\Khalevin_s_cool_sapr.props" />
+</Project>

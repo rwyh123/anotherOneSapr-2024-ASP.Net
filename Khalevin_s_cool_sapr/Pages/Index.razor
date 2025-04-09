@@ -1,0 +1,870 @@
+﻿@inject IJSRuntime JSRuntime
+@page "/"
+@using System.Text
+
+<div class="main-container">
+
+
+    <!-- Панель управления -->
+    <div class="controls">
+
+        <div class="button-group">
+            <button class="action-button" @onclick="AddBeam">Добавить стержень</button>
+            <button class="action-button" @onclick="DeleteBeam" disabled="@(SelectedBeamId == null)">Удалить выбранный стержень</button>
+            <button class="action-button" @onclick="Compute">Рассчитать</button>
+        </div>
+        <div class="checkbox-group">
+            <label>
+                <input type="checkbox" @bind="IsLeftSupport" />
+                Левая опора
+            </label>
+            <label>
+                <input type="checkbox" @bind="IsRightSupport" />
+                Правая опора
+            </label>
+        </div>
+        <div>
+            <button @onclick="SaveStructure">Сохранить</button>
+            <div>
+                <textarea @bind="InputJson" rows="10" cols="50" placeholder="Вставьте содержимое JSON-файла сюда"></textarea>
+                <button @onclick="LoadFromText">Загрузить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Таблицы данных -->
+    <div class="data-tables">
+        <div class="node-table">
+            <h3>Таблица узлов</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Номер узла</th>
+                        <th>Сила</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var node in Nodes)
+                    {
+                        <tr>
+                            <td>@node.Id</td>
+                            <td>
+                                <input type="number" @bind="node.AppliedForce" step="0.1" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="beam-table">
+            <h3>Таблица стержней</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Выбор</th>
+                        <th>ID</th>
+                        <th>Длина</th>
+                        <th>Площадь сечения</th>
+                        <th>Распределённая сила</th>
+                        <th>Упругость</th>
+                        <th>Допустимое напряжение</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var beam in Beams)
+                    {
+                        <tr>
+                            <td>
+                                <input type="radio" name="selectedBeam" value="@beam.Id" @onchange="() => SelectBeam(beam.Id)" />
+                            </td>
+                            <td>@beam.Id</td>
+                            <td>
+                                <input type="number" @bind="beam.Length" step="0.1" />
+                            </td>
+                            <td>
+                                <input type="number" @bind="beam.CrossSectionArea" step="0.001" />
+                            </td>
+                            <td>
+                                <input type="number" @bind="beam.DistributedForce" step="1" />
+                            </td>
+                            <td>
+                                <input type="number" @bind="beam.Elasticity" step="1e7" />
+                            </td>
+                            <td>
+                                <input type="number" @bind="beam.AllowableStress" step="1e6" />
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Визуализация модели -->
+    <div class="visualization">
+        <h3>Визуализация модели</h3>
+        <svg width="100%" height="300" xmlns="http://www.w3.org/2000/svg" style="border: 1px solid black;">
+            @if (Beams.Any())
+            {
+                double startX = StartX;
+                foreach (var beam in Beams)
+                {
+                    @RenderBeam(beam, startX)
+                    startX += beam.Length * 50; // Позиция следующего стержня
+                }
+            }
+        </svg>
+    </div>
+
+    <div class="point-calculation">
+        <h3>Расчёт значений в точке</h3>
+        <div>
+            <label>Введите номер элемента:</label>
+            <input type="number" @bind="SelectedElementIndex" min="1" max="@Beams.Count" />
+        </div>
+        <div>
+            <label>Введите координату X:</label>
+            <input type="number" @bind="PointX" step="0.01" />
+        </div>
+        <div class="button-group">
+            <button class="action-button" @onclick="ComputeNormalizedXAtPoint">Рассчитать Np(X)</button>
+            <button class="action-button" @onclick="ComputeUnificalXAtPoint">Рассчитать Up(X)</button>
+            <button class="action-button" @onclick="ComputeAllowableStressAtPoint">Рассчитать Delta_X</button>
+        </div>
+        <div>
+            <h4>Результаты:</h4>
+            <p>Np(X): @NormalizedXAtPoint</p>
+            <p>Up(X): @UnificalXAtPoint</p>
+            <p>Delta_X: @AllowableStressAtPoint</p>
+        </div>
+    </div>
+
+
+    <!-- Результаты расчётов -->
+    <div class="results">
+        <h3>Результаты расчётов</h3>
+        <div class="matrix-table">
+            <h4>Глобальная матрица реакций</h4>
+            @if (A != null)
+            {
+                <table>
+                    <tbody>
+                        @for (int i = 0; i < A.GetLength(0); i++)
+                        {
+                            <tr>
+                                @for (int j = 0; j < A.GetLength(1); j++)
+                                {
+                                    <td>@Math.Round(A[i, j], 3)</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p>Глобальная матрица реакций ещё не рассчитана.</p>
+            }
+        </div>
+
+        <div class="vector-table">
+            <h4>Глобальный вектор перемещений</h4>
+            @if (B != null)
+            {
+                <table>
+                    <tbody>
+                        @for (int i = 0; i < B.Length; i++)
+                        {
+                            <tr>
+                                <td>@Math.Round(B[i], 3)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p>Глобальный вектор перемещений ещё не рассчитан.</p>
+            }
+        </div>
+
+        <div class="vector-table">
+            <h4>Глобальный вектор реакций</h4>
+            @if (Delta != null)
+            {
+                <table>
+                    <tbody>
+                        @for (int i = 0; i < Delta.Length; i++)
+                        {
+                            <tr>
+                                <td>@Math.Round(Delta[i], 3)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p>Глобальный вектор реакций ещё не рассчитан.</p>
+            }
+        </div>
+
+        <div class="vector-table">
+            <h4>Np(X)</h4>
+            @if (NormalizedX != null)
+            {
+                <table>
+                    <tbody>
+                        @for (int i = 0; i < NormalizedX.Length; i++)
+                        {
+                            <tr>
+                                <td>@Math.Round(NormalizedX[i], 3)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p>Np(X) ещё не рассчитан.</p>
+            }
+        </div>
+
+        <div class="vector-table">
+            <h4>up(X)</h4>
+            @if (UnificalX != null)
+            {
+                <table>
+                    <tbody>
+                        @for (int i = 0; i < UnificalX.Length; i++)
+                        {
+                            <tr>
+                                <td>@Math.Round(UnificalX[i], 3)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p>up(X) ещё не рассчитан.</p>
+            }
+        </div>
+
+        <div class="vector-table">
+            <h4>sigma(X)</h4>
+            @if (AllowableStress != null)
+            {
+                <table>
+                    <tbody>
+                        @for (int i = 0; i < AllowableStress.Length; i++)
+                        {
+                            <tr>
+                                <td>@Math.Round(AllowableStress[i], 3)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p>sigma(X) ещё не рассчитан.</p>
+            }
+        </div>
+    </div>
+</div>
+
+
+@code {
+    private List<Node> Nodes = new List<Node>();
+    private List<Beam> Beams = new List<Beam>();
+
+    private bool IsLeftSupport { get; set; } = false;
+    private bool IsRightSupport { get; set; } = false;
+    private string InputJson { get; set; }
+
+    private int? SelectedBeamId { get; set; } = null; // Идентификатор выбранного стержня
+
+    private double StartX = 50; // Начальная координата X для первого стержня
+    private double NodeRadius = 5; // Радиус узлов
+
+    private double[,] A; 
+    private double[] B;  
+    private double[] Delta; 
+    private double[] NormalizedX; 
+    private double[] UnificalX; 
+    private double[] AllowableStress; 
+
+    private int SelectedElementIndex { get; set; } = 1; 
+    private double PointX { get; set; } = 0; 
+    private double NormalizedXAtPoint { get; set; } = 0; 
+    private double UnificalXAtPoint { get; set; } = 0; 
+    private double AllowableStressAtPoint { get; set; } = 0; 
+
+
+
+
+    private MarkupString RenderBeam(Beam beam, double startX)
+    {
+        double scale = 50; // Масштабный коэффициент
+        var beamWidth = beam.Length * scale; // Ширина стержня
+        var beamHeight = beam.CrossSectionArea * scale; // Высота стержня
+        var x = startX; // Текущее начало стержня
+        var y = 100 - beamHeight / 2; // Центрирование по вертикали
+
+        // Отрисовка стержня
+        var beamRect = $"<rect x='{x}' y='{y}' width='{beamWidth}' height='{beamHeight}' fill='lightgray' stroke='black' />";
+        var beamText = $"<text x='{x + beamWidth / 2}' y='{y - 10}' text-anchor='middle' font-size='14'>{beam.Id}</text>";
+
+        // Левый узел
+        var leftNode = $"<circle cx='{x}' cy='{y + beamHeight / 2}' r='{NodeRadius}' fill='black' />" +
+                       $"<text x='{x - 20}' y='{y + beamHeight / 2 + 5}' font-size='14'>{beam.Id}</text>";
+
+        // Правый узел
+        var rightNode = $"<circle cx='{x + beamWidth}' cy='{y + beamHeight / 2}' r='{NodeRadius}' fill='black' />" +
+                        $"<text x='{x + beamWidth + 10}' y='{y + beamHeight / 2 + 5}' font-size='14'>{beam.Id + 1}</text>";
+
+        // Отображение сил
+        var loadLeft = RenderNodeForce(beam.Id, x, y + beamHeight / 2, isLeft: true);
+        var loadRight = RenderNodeForce(beam.Id + 1, x + beamWidth, y + beamHeight / 2, isLeft: false);
+
+        // Отображение распределённой силы
+        var distributedForce = RenderDistributedForce(beam, x, y, beamWidth, beamHeight);
+
+        // Отображение опор
+        var supportLeft = IsLeftSupport && beam.Id == 1 ? RenderSupport(true, x, y, beamHeight) : "";
+        var supportRight = IsRightSupport && beam.Id == Beams.Count ? RenderSupport(false, x + beamWidth, y, beamHeight) : "";
+
+        return new MarkupString($"{beamRect}{beamText}{leftNode}{rightNode}{loadLeft}{loadRight}{distributedForce}{supportLeft}{supportRight}");
+    }
+
+
+
+    private string RenderDistributedForce(Beam beam, double x, double y, double width, double height)
+    {
+        if (beam.DistributedForce == 0)
+        {
+            return ""; // Если распределённая сила равна 0, ничего не отображаем
+        }
+
+        string arrows = "";
+        double arrowSpacing = 20; // Расстояние между стрелками
+        double arrowLength = 15; // Длина стрелки
+        double arrowHeight = 5; // Высота стрелки
+        int arrowDirection = beam.DistributedForce > 0 ? 1 : -1; // Направление стрелки (вправо или влево)
+
+        for (double offset = 0; offset < width; offset += arrowSpacing)
+        {
+            double arrowX = x + offset + (arrowDirection < 0 ? arrowLength : 0); // Коррекция начальной точки для отрицательных стрелок
+            double arrowY = y + height / 2;
+
+            double arrowTipX = arrowX + arrowLength * arrowDirection;
+            double arrowBaseY1 = arrowY - arrowHeight;
+            double arrowBaseY2 = arrowY + arrowHeight;
+
+            arrows += $@"
+            <line x1='{arrowX}' y1='{arrowY}' x2='{arrowTipX}' y2='{arrowY}' stroke='black' stroke-width='1' />
+            <line x1='{arrowTipX}' y1='{arrowY}' x2='{arrowTipX - 5 * arrowDirection}' y2='{arrowBaseY1}' stroke='black' stroke-width='1' />
+            <line x1='{arrowTipX}' y1='{arrowY}' x2='{arrowTipX - 5 * arrowDirection}' y2='{arrowBaseY2}' stroke='black' stroke-width='1' />
+        ";
+        }
+
+        return arrows;
+    }
+
+
+
+    private string RenderNodeForce(int nodeId, double nodeX, double nodeY, bool isLeft)
+    {
+        var node = Nodes.FirstOrDefault(n => n.Id == nodeId);
+        if (node == null || node.AppliedForce == 0)
+        {
+            return ""; // Если узел отсутствует или сила равна 0, ничего не отображаем
+        }
+
+        var forceColor = node.AppliedForce > 0 ? "red" : "blue"; // Красная стрелка для положительных сил, синяя для отрицательных
+        var arrowDirection = node.AppliedForce > 0 ? 1 : -1; // Направление стрелки
+        var arrowLength = 20 * arrowDirection; // Длина стрелки
+
+        // Сила из узла (левая или правая сторона определяется параметром isLeft)
+        return $"<line x1='{nodeX}' y1='{nodeY}' x2='{nodeX + arrowLength}' y2='{nodeY}' stroke='{forceColor}' stroke-width='2' />" +
+               $"<polygon points='{nodeX + arrowLength},{nodeY - 5} {nodeX + arrowLength},{nodeY + 5} {nodeX + arrowLength + 10 * arrowDirection},{nodeY}' fill='{forceColor}' />";
+    }
+
+
+    private string RenderSupport(bool isLeft, double x, double y, double height)
+    {
+        double supportWidth = 10; // Ширина области для штриховки
+        double lineSpacing = 10; // Расстояние между линиями
+        double lineLength = 10; // Длина линий штриховки
+
+        string lines = "";
+
+        if (isLeft)
+        {
+            // Левая опора - диагональные линии слева
+            for (double offset = -supportWidth; offset < height - supportWidth / 2; offset += lineSpacing)
+            {
+                double x1 = x - supportWidth;
+                double y1 = y + offset;
+                double x2 = x;
+                double y2 = y + offset + supportWidth;
+
+                if (y1 <= y + height && y2 >= y) // Проверка выхода за пределы высоты
+                {
+                    lines += $"<line x1='{x1}' y1='{y1}' x2='{x2}' y2='{y2}' stroke='black' stroke-width='1' />";
+                }
+            }
+        }
+        else
+        {
+            // Правая опора - диагональные линии справа
+            for (double offset = -supportWidth - supportWidth / 2; offset < height; offset += lineSpacing)
+            {
+                double x1 = x;
+                double y1 = y + offset;
+                double x2 = x + supportWidth;
+                double y2 = y + offset + supportWidth;
+
+                if (y1 <= y + height && y2 >= y) // Проверка выхода за пределы высоты
+                {
+                    lines += $"<line x1='{x1}' y1='{y1}' x2='{x2}' y2='{y2}' stroke='black' stroke-width='1' />";
+                }
+            }
+        }
+
+        return lines;
+    }
+
+
+    private void AddBeam()
+    {
+        var newBeam = new Beam
+            {
+                Id = Beams.Count + 1,
+                Length = 1, // Длина стержня по умолчанию
+                CrossSectionArea = 1, // Площадь сечения по умолчанию
+                DistributedForce = 0, // Распределённая сила
+                Elasticity = 1, // Упругость
+                AllowableStress = 1 // Допустимое напряжение
+            };
+
+        Beams.Add(newBeam);
+
+        int startNodeId = newBeam.Id;
+        int endNodeId = newBeam.Id + 1;
+
+        if (!Nodes.Any(n => n.Id == startNodeId))
+        {
+            Nodes.Add(new Node { Id = startNodeId, AppliedForce = 0 });
+        }
+        if (!Nodes.Any(n => n.Id == endNodeId))
+        {
+            Nodes.Add(new Node { Id = endNodeId, AppliedForce = 0 });
+        }
+    }
+
+    private void DeleteBeam()
+    {
+        if (SelectedBeamId.HasValue)
+        {
+            var beamToDelete = Beams.FirstOrDefault(b => b.Id == SelectedBeamId.Value);
+            if (beamToDelete != null)
+            {
+                Beams.Remove(beamToDelete);
+
+                // Пересчитываем идентификаторы стержней
+                for (int i = 0; i < Beams.Count; i++)
+                {
+                    Beams[i].Id = i + 1;
+                }
+
+                // Пересчитываем узлы
+                Nodes.Clear();
+                foreach (var beam in Beams)
+                {
+                    int startNodeId = beam.Id;
+                    int endNodeId = beam.Id + 1;
+
+                    if (!Nodes.Any(n => n.Id == startNodeId))
+                    {
+                        Nodes.Add(new Node { Id = startNodeId, AppliedForce = 0 });
+                    }
+                    if (!Nodes.Any(n => n.Id == endNodeId))
+                    {
+                        Nodes.Add(new Node { Id = endNodeId, AppliedForce = 0 });
+                    }
+                }
+
+                SelectedBeamId = null; // Сбрасываем выбор
+            }
+        }
+    }
+    // Метод сохранения структуры
+    private async Task SaveStructure()
+    {
+        var structure = new
+        {
+            Beams = Beams,
+            Nodes = Nodes,
+            LeftSupport = IsLeftSupport,
+            RightSupport = IsRightSupport
+        };
+
+        string json = System.Text.Json.JsonSerializer.Serialize(structure, new System.Text.Json.JsonSerializerOptions
+            {
+                WriteIndented = true
+            });
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+        var base64 = Convert.ToBase64String(bytes);
+
+        // Использование JSRuntime для вызова браузерного API
+        await JSRuntime.InvokeVoidAsync("downloadFile", "structure.json", "application/json", base64);
+    }
+
+    // Метод загрузки структуры
+    private void LoadFromText()
+    {
+
+            // Десериализация содержимого JSON из текстового поля
+            var structure = System.Text.Json.JsonSerializer.Deserialize<StructureData>(InputJson);
+            if (structure != null)
+            {
+                Beams = structure.Beams;
+                Nodes = structure.Nodes;
+                IsLeftSupport = structure.LeftSupport;
+                IsRightSupport = structure.RightSupport;
+            }
+
+    }
+
+    // Вспомогательный класс для десериализации структуры
+    private class StructureData
+    {
+        public List<Beam> Beams { get; set; } = new();
+        public List<Node> Nodes { get; set; } = new();
+        public bool LeftSupport { get; set; }
+        public bool RightSupport { get; set; }
+    }
+
+
+
+
+    private void SelectBeam(int beamId)
+    {
+        SelectedBeamId = beamId;
+    }
+
+    private void Compute()
+    {
+        CalculateGlobalMatrix();
+        CreateOfPowers();
+        ComputeDelta();
+        ComputeNormalizedX();
+        ComputeUnificalX();
+        ComputeAllowableStress();
+    }
+
+    private void CalculateGlobalMatrix()
+    {
+        int nodeCount = Nodes.Count;
+        A = new double[nodeCount, nodeCount]; // Инициализация матрицы A
+
+        // Заполнение матрицы A нулями
+        for (int i = 0; i < nodeCount; i++)
+        {
+            for (int j = 0; j < nodeCount; j++)
+            {
+                A[i, j] = 0;
+            }
+        }
+
+        // Заполнение матрицы A с учётом жёсткостей стержней
+        foreach (var beam in Beams)
+        {
+            double stiffness = beam.Elasticity * beam.CrossSectionArea / beam.Length; // Жёсткость стержня
+            int i = beam.Id - 1; // Левый узел стержня
+            int j = beam.Id;     // Правый узел стержня
+
+            A[i, i] += stiffness;
+            A[j, j] += stiffness;
+            A[i, j] -= stiffness;
+            A[j, i] -= stiffness;
+        }
+
+        // Учёт опор (граничные условия)
+        if (IsLeftSupport)
+        {
+            A[0, 0] = 1;
+            for (int j = 1; j < nodeCount; j++)
+            {
+                A[0, j] = 0;
+                A[j, 0] = 0;
+            }
+        }
+
+        if (IsRightSupport)
+        {
+            A[nodeCount - 1, nodeCount - 1] = 1;
+            for (int j = 0; j < nodeCount - 1; j++)
+            {
+                A[nodeCount - 1, j] = 0;
+                A[j, nodeCount - 1] = 0;
+            }
+        }
+
+
+    }
+
+    private void CreateOfPowers()
+    {
+        B = new double[Nodes.Count]; // Инициализация вектора B
+
+        for (int i = 0; i < Nodes.Count; i++)
+        {
+            // Условие для левой опоры
+            if (IsLeftSupport && i == 0)
+            {
+                B[i] = 0;
+            }
+            // Условие для правой опоры
+            else if (IsRightSupport && i == Nodes.Count - 1)
+            {
+                B[i] = 0;
+            }
+            // Условие для первого узла
+            else if (i == 0)
+            {
+                B[i] = Nodes[i].AppliedForce + (Beams[i].DistributedForce * Beams[i].Length / 2);
+            }
+            // Условие для последнего узла
+            else if (i == Nodes.Count - 1)
+            {
+                B[i] = Nodes[i].AppliedForce + (Beams[i - 1].DistributedForce * Beams[i - 1].Length / 2);
+            }
+            // Условие для внутренних узлов
+            else
+            {
+                B[i] = Nodes[i].AppliedForce
+                    + (Beams[i].DistributedForce * Beams[i].Length / 2)
+                    + (Beams[i - 1].DistributedForce * Beams[i - 1].Length / 2);
+            }
+        }
+    }
+
+    private void ComputeDelta()
+    {
+        int nodeCount = Nodes.Count;
+        var reducedMatrix = new double[nodeCount, nodeCount];
+        var reducedVector = new double[nodeCount];
+
+        for (int i = 0; i < nodeCount; i++)
+        {
+            for (int j = 0; j < nodeCount; j++)
+            {
+                reducedMatrix[i, j] = A[i, j];
+            }
+            reducedVector[i] = B[i];
+        }
+
+        for (int k = 0; k < nodeCount; k++)
+        {
+            for (int i = k + 1; i < nodeCount; i++)
+            {
+                double factor = reducedMatrix[i, k] / reducedMatrix[k, k];
+                for (int j = k; j < nodeCount; j++)
+                {
+                    reducedMatrix[i, j] -= factor * reducedMatrix[k, j];
+                }
+                reducedVector[i] -= factor * reducedVector[k];
+            }
+        }
+
+        Delta = new double[nodeCount];
+        for (int i = nodeCount - 1; i >= 0; i--)
+        {
+            Delta[i] = reducedVector[i];
+            for (int j = i + 1; j < nodeCount; j++)
+            {
+                Delta[i] -= reducedMatrix[i, j] * Delta[j];
+            }
+            Delta[i] /= reducedMatrix[i, i];
+        }
+
+    }
+
+    private void ComputeNormalizedX()
+    {
+        NormalizedX = new double[Beams.Count * 2]; 
+
+        for (int i = 0; i < Beams.Count; i++)
+        {
+            var beam = Beams[i];
+            double E = beam.Elasticity;           // Модуль упругости
+            double A = beam.CrossSectionArea;     // Площадь поперечного сечения
+            double L = beam.Length;               // Длина стержня
+            double Upo = Delta[beam.Id - 1];      // Перемещение узла p (левый узел стержня)
+            double Up1 = Delta[beam.Id];          // Перемещение узла p+1 (правый узел стержня)
+            double q = beam.DistributedForce;     // Распределённая нагрузка
+
+            double N0 = (E * A / L) * (Up1 - Upo) + (q * L / 2) * (1 - 2 * 0 / L);
+            double NL = (E * A / L) * (Up1 - Upo) + (q * L / 2) * (1 - 2 * L / L);
+
+            NormalizedX[i * 2] = N0;
+            NormalizedX[i * 2 + 1] = NL;
+
+
+        }
+
+
+    }
+
+    private void ComputeUnificalX()
+    {
+        UnificalX = new double[Beams.Count * 2]; 
+
+        for (int i = 0; i < Beams.Count; i++)
+        {
+            var beam = Beams[i];
+            double L = beam.Length;
+            double E = beam.Elasticity;
+            double A = beam.CrossSectionArea;
+            double q = beam.DistributedForce;
+            double Upo = Delta[i];      // Перемещение узла p (левый узел стержня)
+            double Up1 = Delta[i + 1];  // Перемещение узла p+1 (правый узел стержня)
+            double U0 = 0;
+            double UL = 0;
+
+            if (q != 0)
+            {
+                U0 = Upo;
+
+                UL = Upo
+                    + (L / L) * (Up1 - Upo)
+                    + (q * L * L) / (2 * E * A) * (1 - (L / L));
+            }
+            else
+            {
+                // Если распределённой силы нет
+                if (i != 0)
+                {
+                    U0 = UnificalX[(i - 1) * 2 + 1];
+                }
+                else
+                {
+                    U0 = Upo;
+                }
+
+                UL = Upo + (L / L) * (Up1 - Upo);
+            }
+
+            // Сохраняем результаты расчета
+            UnificalX[i * 2] = Math.Round(U0, 3);       // UnificalX в начале стержня
+            UnificalX[i * 2 + 1] = Math.Round(UL, 3);  // UnificalX в конце стержня
+        }
+    }
+
+
+    private void ComputeAllowableStress()
+    {
+        AllowableStress = new double[Beams.Count * 2]; 
+
+        for (int i = 0; i < Beams.Count; i++)
+        {
+            var beam = Beams[i];
+            double A = beam.CrossSectionArea; // Площадь поперечного сечения
+
+            double N0 = NormalizedX[i * 2];     // Продольная сила в начале стержня
+            double NL = NormalizedX[i * 2 + 1]; // Продольная сила в конце стержня
+
+            double D0 = N0 / A;
+            double DL = NL / A;
+
+            AllowableStress[i * 2] = D0;
+            AllowableStress[i * 2 + 1] = DL;
+
+        }
+
+
+    }
+
+    private void ComputeNormalizedXAtPoint()
+    {
+        
+            if (SelectedElementIndex > 0 && SelectedElementIndex <= Beams.Count)
+            {
+                NormalizedXAtPoint = ComputeNormalizedX(SelectedElementIndex - 1, PointX);
+            }
+        
+
+    }
+
+    private void ComputeUnificalXAtPoint()
+    {
+        
+            if (SelectedElementIndex > 0 && SelectedElementIndex <= Beams.Count)
+            {
+                UnificalXAtPoint = ComputeUnificalX(SelectedElementIndex - 1, PointX);
+            }
+        
+
+    }
+
+    private void ComputeAllowableStressAtPoint()
+    {
+
+            if (SelectedElementIndex > 0 && SelectedElementIndex <= Beams.Count)
+            {
+                AllowableStressAtPoint = ComputeAllowableStress(SelectedElementIndex - 1, PointX);
+            }
+        
+
+    }
+
+    private double ComputeNormalizedX(int modelNumb, double x)
+    {
+        double X = x;
+        double E = Beams[modelNumb].Elasticity;
+        double A = Beams[modelNumb].CrossSectionArea;
+        double L = Beams[modelNumb].Length;
+        double Upo = Delta[modelNumb];
+        double Up1 = Delta[modelNumb + 1];
+        double q = Beams[modelNumb].DistributedForce;
+
+        if (q != 0)
+        {
+            return ((E * A) / L * (Up1 - Upo) + (q * L) / 2 * (1 - 2 * (X / L)));
+        }
+        else
+        {
+            return ((E * A) / L * (Up1 - Upo));
+        }
+    }
+
+    private double ComputeUnificalX(int modelNumb, double x)
+    {
+        double X = x;
+
+        if (Beams[modelNumb].DistributedForce != 0)
+        {
+            return Math.Round(Delta[modelNumb] + X / Beams[modelNumb].Length * (Delta[modelNumb + 1] - Delta[modelNumb]) +
+                              Beams[modelNumb].DistributedForce * Beams[modelNumb].Length * Beams[modelNumb].Length / (2 * Beams[modelNumb].Elasticity * Beams[modelNumb].CrossSectionArea) *
+                              (1 - X / Beams[modelNumb].Length), 3);
+        }
+        else
+        {
+            return Math.Round(Delta[modelNumb] + X / Beams[modelNumb].Length * (Delta[modelNumb + 1] - Delta[modelNumb]), 3);
+        }
+    }
+
+    private double ComputeAllowableStress(int modelNumb, double x)
+    {
+        double X = x;
+        return NormalizedXAtPoint / Beams[modelNumb].CrossSectionArea;
+    }
+}
+
+
+}
